@@ -24,6 +24,10 @@
 │  │ Google Gemini   │ │ Google Cloud    │ │ MySQL Database  │    │
 │  │ AI API          │ │ Speech API      │ │                 │    │
 │  └─────────────────┘ └─────────────────┘ └─────────────────┘    │
+│  ┌─────────────────┐ ┌─────────────────┐                        │
+│  │ Elasticsearch   │ │ JIRA (Optional) │                        │
+│  │ Search Engine   │ │ Ticket System   │                        │
+│  └─────────────────┘ └─────────────────┘                        │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -33,6 +37,7 @@
 - Node.js (v18 or higher)
 - Yarn package manager
 - MySQL database
+- Elasticsearch (v8.x or higher)
 - Google Cloud account with APIs enabled
 - Git
 
@@ -43,8 +48,9 @@
 - **Google Cloud Speech API**: For audio transcription
 - **Service Account**: For authentication
 
-#### 2. Database
+#### 2. Database & Search
 - **MySQL**: Primary database for all data storage
+- **Elasticsearch**: Full-text search and analytics engine
 
 #### 3. Optional Services
 - **JIRA**: For ticket management (if using JIRA integration)
@@ -96,6 +102,11 @@ PORT=8787
 
 # CORS Configuration (Frontend URLs)
 ALLOWED_ORIGINS=http://localhost:4001,http://localhost:3000,https://your-production-domain.com
+
+# Elasticsearch Configuration
+ELASTICSEARCH_NODE=http://localhost:9200
+ELASTICSEARCH_USERNAME=elastic
+ELASTICSEARCH_PASSWORD=your_elasticsearch_password
 ```
 
 #### 2.3 Database Setup
@@ -107,7 +118,28 @@ yarn generate-migration
 yarn migrate-db
 ```
 
-#### 2.4 Start Backend Server
+#### 2.4 Elasticsearch Setup
+```bash
+# Install Elasticsearch (macOS with Homebrew)
+brew install elasticsearch
+brew services start elasticsearch
+
+# Install Elasticsearch (Ubuntu/Debian)
+wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
+echo "deb https://artifacts.elastic.co/packages/8.x/apt stable main" | sudo tee /etc/apt/sources.list.d/elastic-8.x.list
+sudo apt-get update && sudo apt-get install elasticsearch
+sudo systemctl start elasticsearch
+sudo systemctl enable elasticsearch
+
+# Install Elasticsearch (Windows)
+# Download from https://www.elastic.co/downloads/elasticsearch
+# Extract and run bin/elasticsearch.bat
+
+# Verify Elasticsearch is running
+curl -X GET "localhost:9200/"
+```
+
+#### 2.5 Start Backend Server
 ```bash
 # Start development server
 yarn start:dev
@@ -198,6 +230,62 @@ GRANT ALL PRIVILEGES ON ai_pilot.* TO 'ai_user'@'localhost';
 FLUSH PRIVILEGES;
 ```
 
+### Elasticsearch Setup
+
+#### 1. Install Elasticsearch
+```bash
+# macOS with Homebrew
+brew install elasticsearch
+brew services start elasticsearch
+
+# Ubuntu/Debian
+wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
+echo "deb https://artifacts.elastic.co/packages/8.x/apt stable main" | sudo tee /etc/apt/sources.list.d/elastic-8.x.list
+sudo apt-get update && sudo apt-get install elasticsearch
+sudo systemctl start elasticsearch
+sudo systemctl enable elasticsearch
+
+# Windows
+# Download from https://www.elastic.co/downloads/elasticsearch
+# Extract and run bin/elasticsearch.bat
+```
+
+#### 2. Configure Elasticsearch
+```bash
+# Edit configuration file
+sudo nano /etc/elasticsearch/elasticsearch.yml
+
+# Add these configurations:
+cluster.name: ai-copilot-cluster
+node.name: ai-copilot-node
+network.host: localhost
+http.port: 9200
+discovery.type: single-node
+xpack.security.enabled: true
+xpack.security.transport.ssl.enabled: false
+```
+
+#### 3. Set Elasticsearch Password
+```bash
+# Generate password for elastic user
+sudo /usr/share/elasticsearch/bin/elasticsearch-reset-password -u elastic
+
+# Or set custom password
+sudo /usr/share/elasticsearch/bin/elasticsearch-reset-password -u elastic -i
+```
+
+#### 4. Verify Elasticsearch
+```bash
+# Check if Elasticsearch is running
+curl -X GET "localhost:9200/"
+
+# Check cluster health
+curl -X GET "localhost:9200/_cluster/health?pretty"
+
+# List indices
+curl -X GET "localhost:9200/_cat/indices?v"
+```
+
 ## 🔌 System Integration
 
 ### API Endpoints
@@ -235,6 +323,12 @@ FLUSH PRIVILEGES;
 - `POST /calls/search` - Search calls
 - `GET /calls/analytics` - Get call statistics
 
+#### Search & Analytics
+- `GET /search` - Global search across all content
+- `POST /search/advanced` - Advanced search with filters
+- `GET /search/suggestions` - Search suggestions
+- `GET /analytics/dashboard` - Analytics dashboard data
+
 #### Policy Management
 - `GET /policies` - List policies
 - `POST /policies` - Create policy
@@ -270,6 +364,13 @@ FLUSH PRIVILEGES;
 - **policies** - Policy documents
 - **file_uploads** - File upload tracking
 - **memory_facts** - Conversation memory
+
+### Elasticsearch Indices
+- **calls_index** - Call recordings and transcripts for search
+- **documents_index** - Document content for full-text search
+- **messages_index** - Chat messages for search and analytics
+- **policies_index** - Policy documents for compliance search
+- **audio_index** - Audio transcripts and metadata
 
 ### Key Relationships
 ```
@@ -318,11 +419,16 @@ yarn start
 
 ### Full System Development
 ```bash
-# Terminal 1: Start Backend
+# Terminal 1: Start Elasticsearch
+brew services start elasticsearch
+# or
+sudo systemctl start elasticsearch
+
+# Terminal 2: Start Backend
 cd ai-copilot
 yarn start:dev
 
-# Terminal 2: Start Frontend
+# Terminal 3: Start Frontend
 cd callcenter-ui
 yarn dev
 ```
@@ -341,6 +447,9 @@ export DB_HOST=your_production_db_host
 export DB_PASSWORD=your_production_password
 export JWT_SECRET=your_production_jwt_secret
 export GOOGLE_APPLICATION_CREDENTIALS=/path/to/production/credentials.json
+export ELASTICSEARCH_NODE=https://your-elasticsearch-cluster.com:9200
+export ELASTICSEARCH_USERNAME=elastic
+export ELASTICSEARCH_PASSWORD=your_elasticsearch_password
 
 # Start production server
 yarn start:prod
@@ -394,8 +503,21 @@ services:
     volumes:
       - mysql_data:/var/lib/mysql
 
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=true
+      - ELASTIC_PASSWORD=your_elasticsearch_password
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+
 volumes:
   mysql_data:
+  elasticsearch_data:
 ```
 
 ## 🔒 Security Configuration
@@ -438,12 +560,18 @@ volumes:
    - Verify database exists
    - Check network connectivity
 
-2. **Google Cloud Authentication Failed**
+2. **Elasticsearch Connection Failed**
+   - Verify Elasticsearch is running on port 9200
+   - Check credentials in environment variables
+   - Test connection: `curl -X GET "localhost:9200/"`
+   - Check cluster health: `curl -X GET "localhost:9200/_cluster/health?pretty"`
+
+3. **Google Cloud Authentication Failed**
    - Verify service account key path
    - Check API permissions
    - Ensure billing is enabled
 
-3. **CORS Errors**
+4. **CORS Errors**
    - Add frontend URL to `ALLOWED_ORIGINS`
    - Check frontend is running on correct port
 
@@ -523,13 +651,15 @@ For support and questions:
 
 **Quick Start Summary:**
 1. Set up MySQL database
-2. Configure Google Cloud APIs
-3. Start backend server (`yarn start:dev`)
-4. Start frontend server (`yarn dev`)
-5. Access system at `http://localhost:4001`
+2. Set up Elasticsearch
+3. Configure Google Cloud APIs
+4. Start backend server (`yarn start:dev`)
+5. Start frontend server (`yarn dev`)
+6. Access system at `http://localhost:4001`
 
 **System Status Check:**
 - Backend: `http://localhost:8787/health`
 - Frontend: `http://localhost:4001`
 - Database: Check MySQL connection
+- Elasticsearch: `curl -X GET "localhost:9200/"`
 - APIs: Verify Google Cloud credentials
